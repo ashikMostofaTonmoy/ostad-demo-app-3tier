@@ -138,7 +138,7 @@ jobs:
       - name: Build application
         working-directory: ${{ env.FRONTEND_DIR }}
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
         run: npm run build
 
       - name: Create deployment package
@@ -152,102 +152,122 @@ jobs:
           path: ${{ env.FRONTEND_DIR }}/frontend-deploy.tar.gz
           retention-days: 1
 
-  # # =======================
-  # # Job 5: Deploy to Server
-  # # =======================
-  # deploy:
-  #   name: Deploy to Production
-  #   needs: [build-backend, build-frontend]
-  #   runs-on: ubuntu-latest
-  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  # =======================
+  # Job 5: Deploy to Server
+  # =======================
+  deploy:
+    name: Deploy to Production
+    needs: [build-backend, build-frontend]
+    runs-on: ostad-runner
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
-  #   steps:
-  #     - name: Download backend package
-  #       uses: actions/download-artifact@v3
-  #       with:
-  #         name: backend-package
+    steps:
+      - name: Download backend package
+        uses: actions/download-artifact@v3
+        with:
+          name: backend-package
 
-  #     - name: Download frontend package
-  #       uses: actions/download-artifact@v3
-  #       with:
-  #         name: frontend-package
+      - name: Download frontend package
+        uses: actions/download-artifact@v3
+        with:
+          name: frontend-package
 
-  #     - name: Deploy to server
-  #       uses: appleboy/ssh-action@master
-  #       with:
-  #         host: ${{ secrets.SERVER_HOST }}
-  #         username: ${{ secrets.SERVER_USER }}
-  #         key: ${{ secrets.SSH_PRIVATE_KEY }}
-  #         script: |
-  #           echo "🚀 Starting deployment..."
+      # - name: Deploy to server
+      #   uses: appleboy/ssh-action@master
+      #   with:
+      #     host: ${{ secrets.SERVER_HOST }}
+      #     username: ${{ secrets.SERVER_USER }}
+      #     key: ${{ secrets.SSH_PRIVATE_KEY }}
+      #     script: |
+      #       echo "🚀 Starting deployment..."
 
-  #           # Create temporary directory
-  #           mkdir -p /tmp/deploy
+      #       # Create temporary directory
+      #       mkdir -p /tmp/deploy
 
-  #           echo "📦 Preparing backend deployment..."
-  #           # Backend deployment will be handled by SCP
+      #       echo "📦 Preparing backend deployment..."
+      #       # Backend deployment will be handled by SCP
 
-  #           echo "✅ Deployment preparation complete"
+      #       echo "✅ Deployment preparation complete"
+      - name: Deploy to server
+        run: |
+          echo "🚀 Starting deployment..."
 
-  #     - name: Copy backend to server
-  #       uses: appleboy/scp-action@master
-  #       with:
-  #         host: ${{ secrets.SERVER_HOST }}
-  #         username: ${{ secrets.SERVER_USER }}
-  #         key: ${{ secrets.SSH_PRIVATE_KEY }}
-  #         source: "backend-deploy.tar.gz"
-  #         target: "/tmp/deploy"
+          # Create temporary directory
+          mkdir -p /tmp/deploy
 
-  #     - name: Copy frontend to server
-  #       uses: appleboy/scp-action@master
-  #       with:
-  #         host: ${{ secrets.SERVER_HOST }}
-  #         username: ${{ secrets.SERVER_USER }}
-  #         key: ${{ secrets.SSH_PRIVATE_KEY }}
-  #         source: "frontend-deploy.tar.gz"
-  #         target: "/tmp/deploy"
+          echo "📦 Preparing backend deployment..."
+          # Backend deployment will be handled by SCP
 
-  #     - name: Finalize deployment
-  #       uses: appleboy/ssh-action@master
-  #       with:
-  #         host: ${{ secrets.SERVER_HOST }}
-  #         username: ${{ secrets.SERVER_USER }}
-  #         key: ${{ secrets.SSH_PRIVATE_KEY }}
-  #         script: |
-  #           echo "🔄 Stopping services..."
-  #           sudo systemctl stop backend
+          echo "✅ Deployment preparation complete"
 
-  #           echo "📁 Backing up current version..."
-  #           sudo cp -r /var/www/backend /var/www/backend.backup.$(date +%Y%m%d_%H%M%S)
-  #           sudo cp -r /var/www/html /var/www/html.backup.$(date +%Y%m%d_%H%M%S)
+      # - name: Copy backend to server
+      #   uses: appleboy/scp-action@master
+      #   with:
+      #     host: ${{ secrets.SERVER_HOST }}
+      #     username: ${{ secrets.SERVER_USER }}
+      #     key: ${{ secrets.SSH_PRIVATE_KEY }}
+      #     source: "backend-deploy.tar.gz"
+      #     target: "/tmp/deploy"
 
-  #           echo "🗑️ Cleaning old files..."
-  #           sudo rm -rf /var/www/backend/*
-  #           sudo rm -rf /var/www/html/*
+      - name: Copy backend to server
+        run: |
+          mkdir -p /tmp/deploy
+          cp backend-deploy.tar.gz /tmp/deploy/
 
-  #           echo "📦 Extracting backend..."
-  #           sudo tar -xzf /tmp/deploy/backend-deploy.tar.gz -C /var/www/backend/
+      # - name: Copy frontend to server
+      #   uses: appleboy/scp-action@master
+      #   with:
+      #     host: ${{ secrets.SERVER_HOST }}
+      #     username: ${{ secrets.SERVER_USER }}
+      #     key: ${{ secrets.SSH_PRIVATE_KEY }}
+      #     source: "frontend-deploy.tar.gz"
+      #     target: "/tmp/deploy"
+      - name: Copy frontend to server
+        run: |
+          mkdir -p /tmp/deploy
+          cp frontend-deploy.tar.gz /tmp/deploy/
 
-  #           echo "📦 Extracting frontend..."
-  #           sudo tar -xzf /tmp/deploy/frontend-deploy.tar.gz -C /var/www/html/
+      - name: Finalize deployment
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            echo "🔄 Stopping services..."
+            sudo systemctl stop backend
 
-  #           echo "🔐 Setting permissions..."
-  #           sudo chown -R www-data:www-data /var/www/backend
-  #           sudo chown -R www-data:www-data /var/www/html
+            echo "📁 Backing up current version..."
+            sudo cp -r /var/www/backend /var/www/backend.backup.$(date +%Y%m%d_%H%M%S)
+            sudo cp -r /var/www/html /var/www/html.backup.$(date +%Y%m%d_%H%M%S)
 
-  #           echo "🚀 Starting services..."
-  #           sudo systemctl start backend
-  #           sudo systemctl reload nginx
+            echo "🗑️ Cleaning old files..."
+            sudo rm -rf /var/www/backend/*
+            sudo rm -rf /var/www/html/*
 
-  #           echo "🧹 Cleanup..."
-  #           rm -rf /tmp/deploy/*
+            echo "📦 Extracting backend..."
+            sudo tar -xzf /tmp/deploy/backend-deploy.tar.gz -C /var/www/backend/
 
-  #           echo "✅ Deployment complete!"
+            echo "📦 Extracting frontend..."
+            sudo tar -xzf /tmp/deploy/frontend-deploy.tar.gz -C /var/www/html/
 
-  #           # Verify services
-  #           echo "🔍 Verifying deployment..."
-  #           sudo systemctl status backend --no-pager
-  #           curl -f http://localhost:5000/health || echo "⚠️ Backend health check failed"
-  #           curl -f http://localhost || echo "⚠️ Frontend check failed"
+            echo "🔐 Setting permissions..."
+            sudo chown -R www-data:www-data /var/www/backend
+            sudo chown -R www-data:www-data /var/www/html
 
-  #           echo "🎉 All done!"
+            echo "🚀 Starting services..."
+            sudo systemctl start backend
+            sudo systemctl reload nginx
+
+            echo "🧹 Cleanup..."
+            rm -rf /tmp/deploy/*
+
+            echo "✅ Deployment complete!"
+
+            # Verify services
+            echo "🔍 Verifying deployment..."
+            sudo systemctl status backend --no-pager
+            curl -f http://localhost:5000/health || echo "⚠️ Backend health check failed"
+            curl -f http://localhost || echo "⚠️ Frontend check failed"
+
+            echo "🎉 All done!"
