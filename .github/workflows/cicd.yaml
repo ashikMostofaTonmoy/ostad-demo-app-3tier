@@ -8,7 +8,7 @@ on:
 
 env:
   NODE_VERSION: "20"
-  BACKEND_DIR: "./Ostad-Capston-Backend"
+  BACKEND_DIR: "./Ostad-Capstone-Backend"
   FRONTEND_DIR: "./Ostad-Capstone-Frontend"
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
-          # cache-dependency-path: ${{ env.BACKEND_DIR }}/package-lock.json
+          cache-dependency-path: ${{ env.BACKEND_DIR }}/package-lock.json
 
       - name: Install dependencies
         working-directory: ${{ env.BACKEND_DIR }}
