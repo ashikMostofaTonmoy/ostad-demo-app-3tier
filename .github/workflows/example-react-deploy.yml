@@ -10,10 +10,10 @@ on:
       - deploy-fe-to-cf # Run on PRs to main (for testing)
   workflow_dispatch: # Allow manual trigger from GitHub UI
 
-# # Required permissions for OIDC authentication
-# permissions:
-#   id-token: write # Required to request JWT from GitHub OIDC provider
-#   contents: read # Required to checkout code from repository
+# Required permissions for OIDC authentication
+permissions:
+  id-token: write # Required to request JWT from GitHub OIDC provider
+  contents: read # Required to checkout code from repository
 
 # Environment variables (optional - can also use secrets directly)
 env:
