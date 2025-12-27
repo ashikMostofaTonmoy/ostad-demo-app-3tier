@@ -1,0 +1,284 @@
+name: Deploy React App to AWS S3 & CloudFront
+
+# Trigger this workflow on:
+on:
+  push:
+    branches:
+      - deploy-fe-to-cf # Run on push to main branch
+  pull_request:
+    branches:
+      - deploy-fe-to-cf # Run on PRs to main (for testing)
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+# # Required permissions for OIDC authentication
+# permissions:
+#   id-token: write # Required to request JWT from GitHub OIDC provider
+#   contents: read # Required to checkout code from repository
+
+# Environment variables (optional - can also use secrets directly)
+env:
+  AWS_REGION: ap-southeast-1
+  NODE_VERSION: "24"
+
+jobs:
+  # Job 1: Build and Deploy
+  deploy:
+    name: Build and Deploy to AWS
+    runs-on: ubuntu-latest
+
+    # Only run on main branch (skip PRs)
+    if: github.ref == 'refs/heads/deploy-fe-to-cf'
+
+    steps:
+      # ==========================================
+      # STEP 1: Checkout code from repository
+      # ==========================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for better caching
+
+      # ==========================================
+      # STEP 2: Setup Node.js environment
+      # ==========================================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm" # Cache npm dependencies for faster builds
+
+      # ==========================================
+      # STEP 3: Install dependencies
+      # ==========================================
+      - name: Install dependencies
+        run: |
+          echo "📦 Installing dependencies..."
+          npm ci  # Use 'ci' for clean install (faster than 'install')
+
+      # ==========================================
+      # STEP 4: Run linter (optional)
+      # ==========================================
+      - name: Lint code
+        run: |
+          echo "🔍 Running linter..."
+          npm run lint --if-present
+        continue-on-error: true # Don't fail build if linting fails
+
+      # # ==========================================
+      # # STEP 5: Run tests (optional)
+      # # ==========================================
+      # - name: Run tests
+      #   run: |
+      #     echo "🧪 Running tests..."
+      #     npm test -- --passWithNoTests --coverage
+      #   env:
+      #     CI: true # Ensures tests run in CI mode
+      # ==========================================
+      # STEP 6: Build the application
+      # ==========================================
+      - name: Build application
+        run: |
+          echo "🔨 Building application..."
+          npm run build
+        # env:
+        #   NODE_ENV: production
+        #   GENERATE_SOURCEMAP: false # Disable source maps for smaller build
+        #   # Add your environment variables here:
+        #   # REACT_APP_API_URL: ${{ secrets.API_URL }}
+        #   # REACT_APP_ENV: production
+
+      # ==========================================
+      # STEP 7: Display build information
+      # ==========================================
+      - name: Build information
+        run: |
+          echo "📊 Build completed!"
+          echo "Build size:"
+          du -sh dist/
+          echo ""
+          echo "File breakdown:"
+          du -h dist/* | sort -hr | head -10
+
+      # ==========================================
+      # STEP 8: Configure AWS credentials via OIDC
+      # ==========================================
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-${{ github.repository }}-${{ github.run_id }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      # ==========================================
+      # STEP 9: Verify AWS authentication
+      # ==========================================
+      - name: Verify AWS Identity
+        run: |
+          echo "🔐 Verifying AWS credentials..."
+          aws sts get-caller-identity
+          echo "✅ AWS authentication successful!"
+
+      # ==========================================
+      # STEP 10: Deploy static assets to S3
+      # ==========================================
+      - name: Deploy static assets to S3
+        run: |
+          echo "📤 Uploading static assets with long cache..."
+
+          # Upload static assets (JS, CSS, images) with 1-year cache
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }}/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --metadata-directive REPLACE
+
+          echo "✅ Static assets uploaded successfully!"
+
+      # # ==========================================
+      # # STEP 11: Deploy HTML and root files
+      # # ==========================================
+      # - name: Deploy HTML files to S3
+      #   run: |
+      #     echo "📤 Uploading HTML files with short cache..."
+
+      #     # Upload index.html with no cache
+      #     if [ -f "build/index.html" ]; then
+      #       aws s3 cp build/index.html s3://${{ secrets.S3_BUCKET_NAME }}/index.html \
+      #         --cache-control "public, max-age=0, must-revalidate" \
+      #         --content-type "text/html"
+      #     fi
+
+      #     # Upload service worker with no cache
+      #     if [ -f "build/service-worker.js" ]; then
+      #       aws s3 cp build/service-worker.js s3://${{ secrets.S3_BUCKET_NAME }}/service-worker.js \
+      #         --cache-control "public, max-age=0, must-revalidate" \
+      #         --content-type "application/javascript"
+      #     fi
+
+      #     # Upload other root files
+      #     aws s3 sync build/ s3://${{ secrets.S3_BUCKET_NAME }}/ \
+      #       --exclude "static/*" \
+      #       --exclude "index.html" \
+      #       --exclude "service-worker.js" \
+      #       --cache-control "public, max-age=3600" \
+      #       --delete
+
+      #     echo "✅ HTML files uploaded successfully!"
+
+      # ==========================================
+      # STEP 12: Create CloudFront invalidation
+      # ==========================================
+      - name: Invalidate CloudFront cache
+        id: invalidation
+        run: |
+          echo "🔄 Creating CloudFront invalidation..."
+
+          # Create invalidation for all files
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+
+          echo "Invalidation ID: $INVALIDATION_ID"
+          echo "invalidation_id=$INVALIDATION_ID" >> $GITHUB_OUTPUT
+
+          echo "✅ CloudFront invalidation created!"
+
+      # # ==========================================
+      # # STEP 13: Wait for invalidation to complete
+      # # ==========================================
+      # - name: Wait for CloudFront invalidation
+      #   run: |
+      #     echo "⏳ Waiting for CloudFront invalidation to complete..."
+
+      #     aws cloudfront wait invalidation-completed \
+      #       --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+      #       --id ${{ steps.invalidation.outputs.invalidation_id }}
+
+      #     echo "✅ CloudFront cache invalidated successfully!"
+
+      # ==========================================
+      # STEP 14: Get CloudFront domain
+      # ==========================================
+      - name: Get deployment URL
+        id: get-url
+        run: |
+          CLOUDFRONT_URL=$(aws cloudfront get-distribution \
+            --id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --query 'Distribution.DomainName' \
+            --output text)
+
+          echo "url=https://$CLOUDFRONT_URL" >> $GITHUB_OUTPUT
+          echo "CLOUDFRONT_URL=$CLOUDFRONT_URL" >> $GITHUB_ENV
+
+      # ==========================================
+      # STEP 15: Deployment summary
+      # ==========================================
+      - name: Deployment Summary
+        run: |
+          echo "════════════════════════════════════════"
+          echo "🎉 DEPLOYMENT SUCCESSFUL!"
+          echo "════════════════════════════════════════"
+          echo ""
+          echo "📦 Repository: ${{ github.repository }}"
+          echo "🔀 Branch: ${{ github.ref_name }}"
+          echo "📝 Commit: ${{ github.sha }}"
+          echo "👤 Author: ${{ github.actor }}"
+          echo ""
+          echo "🌐 Your app is live at:"
+          echo "   https://${{ env.CLOUDFRONT_URL }}"
+          echo ""
+          echo "⏱️  Build time: ${{ github.run_number }}"
+          echo "🆔 Run ID: ${{ github.run_id }}"
+          echo ""
+          echo "════════════════════════════════════════"
+
+      # # ==========================================
+      # # STEP 16: Comment on PR (if applicable)
+      # # ==========================================
+      # - name: Comment on PR
+      #   if: github.event_name == 'pull_request'
+      #   uses: actions/github-script@v7
+      #   with:
+      #     script: |
+      #       github.rest.issues.createComment({
+      #         issue_number: context.issue.number,
+      #         owner: context.repo.owner,
+      #         repo: context.repo.repo,
+      #         body: `🚀 Deployment Preview Ready!\n\n✅ Build successful\n🌐 Preview: https://${{ env.CLOUDFRONT_URL }}\n\nCommit: ${{ github.sha }}`
+      #       })
+
+  # # Job 2: Test (runs on PRs)
+  # test:
+  #   name: Run Tests on PR
+  #   runs-on: ubuntu-latest
+
+  #   # Only run on pull requests
+  #   if: github.event_name == 'pull_request'
+
+  #   steps:
+  #     - uses: actions/checkout@v4
+
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: ${{ env.NODE_VERSION }}
+  #         cache: "npm"
+
+  #     - name: Install dependencies
+  #       run: npm ci
+
+  #     - name: Run tests
+  #       run: npm test -- --passWithNoTests --coverage
+  #       env:
+  #         CI: true
+
+  #     - name: Upload coverage
+  #       uses: codecov/codecov-action@v3
+  #       if: always()
+  #       with:
+  #         files: ./coverage/lcov.info
+  #         flags: unittests
+  #         name: codecov-umbrella
+  #         fail_ci_if_error: false
