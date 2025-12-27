@@ -96,7 +96,7 @@ const ResultChecker = () => {
         <h1
           className={`text-2xl sm:text-3xl font-bold text-center ${theme.text} mb-6`}
         >
-          Check Student Result
+          Check Student Result For Ostad Demo App
         </h1>
 
         
